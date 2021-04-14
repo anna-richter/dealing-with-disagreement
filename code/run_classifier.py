@@ -15,8 +15,9 @@ def main():
                         default=None,
                         type=str,
                         required=True,
-                        help="The source directory. It should contain a data folder which contains the ghc_multi.csv file"
-                             "and a result folder to save classification results and predictions.")
+                        help="The source directory (the root of this repo). It should contain a data folder which "
+                             "contains the GHC/ghc_multi.csv file"
+                             "and a results folder to save classification scores and predictions.")
     parser.add_argument("--task",
                         default=None,
                         type=str,

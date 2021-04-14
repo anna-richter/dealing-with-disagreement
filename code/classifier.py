@@ -174,7 +174,7 @@ class ToxicityClassifier():
 
     def create_loss_functions(self):
         losses = dict()
-        self.class_weight = dict()
+        #self.class_weight = dict()
 
         for task_label in self.task_labels:
             _labels = [int(x) for x in self.data[task_label].dropna().tolist()]
@@ -205,7 +205,7 @@ class ToxicityClassifier():
 
         self.loss = self.create_loss_functions()
         for epoch in range(self.params.num_epochs):
-            start = time.time()
+
             loss_val = 0
             self.model.train()
 
