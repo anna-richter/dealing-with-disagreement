@@ -47,6 +47,10 @@ def main():
     def_params = params()
     def_params.update(args)
 
+    if def_params.task not in ["single", "multi_task", "multi_label", "ensemble"]:
+        print("Wring task input")
+        exit(1)
+
     df = pd.read_csv(os.path.join(def_params.source_dir, "data", "GHC", "ghc_multi.csv"))
     annotators = [col for col in df
                   .columns \

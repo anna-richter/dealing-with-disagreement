@@ -11,9 +11,16 @@ class params():
         self.batch_weight = None
         self.sort_by = None
         self.stratified = True
+        self.predict = "label"
+        self.mc_passes = 10
 
     def update(self, new):
         for k, v in new.__dict__.items():
             if getattr(new, k) is not None:
                 print("Changing the default value of {} from {} to {}".format(k, getattr(self, k), v))
                 setattr(self, k, v)
+
+    def update_dict(self, new):
+        for k, v in new.items():
+              print("Changing the default value of {} from {} to {}".format(k, getattr(self, k), v))
+              setattr(self, k, v)

@@ -109,15 +109,12 @@ class ToxicityClassifier():
             ensemble_results = pd.DataFrame()
             for annotator in self.annotators:
                 print("Training model for annotator", annotator)
-                # self.data = self.data.rename(columns = {annotator: "toxic", "toxic": "_toxic"})
                 self.task_labels = ["toxic"]
-                # annotator_data = self.data.dropna(subset=[annotator])[["text", annotator]]
                 scores, results = self._CV(self.data.rename(columns={annotator: "toxic", "toxic": "_toxic"}))
                 ensemble_results[annotator + "_pred"] = results["toxic_pred"]
                 ensemble_results[annotator + "_label"] = results["toxic_label"]
                 ensemble_results[annotator + "_masked_pred"] = results["toxic_masked_pred"]
                 ensemble_results[annotator + "_masked_label"] = results["toxic_masked_label"]
-                # self.data = self.data.rename(columns = {"toxic": annotator, "_toxic": "toxic"})
             self.task_labels = self.annotators
             scores = self.report_results(ensemble_results)
             return scores, ensemble_results
@@ -139,7 +136,6 @@ class ToxicityClassifier():
 
         results = pd.DataFrame()
         i = 1
-        test_results = defaultdict(list)
         for train_idx, test_idx in kfold.split(np.zeros(self.data.shape[0]), self.masks(self.data[self.annotators])):
             print("Fold #", i)
 
@@ -150,15 +146,21 @@ class ToxicityClassifier():
             test_batches = self.get_batches(test)
 
             self.train_model(train_batches)
+            if self.params.predict == "label":
+                # testing on the validation set
+                fold_result = self.predict(test_batches)
+                print("Test:")
+                print(self.report_results(fold_result))
 
-            # testing on the validation set
-            fold_result = self.predict(test_batches)
-            print("Test:")
-            print(self.report_results(fold_result))
-
-            fold_result["fold"] = pd.Series([i for id in test_idx])
-            results = results.append(fold_result)
-            i += 1
+                fold_result["fold"] = pd.Series([i for id in test_idx])
+                results = results.append(fold_result)
+                i += 1
+            elif self.params.predict == "mc":
+                certainty_results = self.mc_predict(test_batches)
+                fold_result = self.predict(test_batches)
+                fold_result["fold"] = pd.Series([i for id in test_idx])
+                fold_result = fold_result.join(certainty_results)
+                results = results.append(fold_result)
 
         scores = self.report_results(results)
         print(scores)
@@ -174,7 +176,7 @@ class ToxicityClassifier():
 
     def create_loss_functions(self):
         losses = dict()
-        #self.class_weight = dict()
+        # self.class_weight = dict()
 
         for task_label in self.task_labels:
             _labels = [int(x) for x in self.data[task_label].dropna().tolist()]
@@ -186,7 +188,6 @@ class ToxicityClassifier():
             weight = torch.tensor(weight, dtype=torch.float32).to(self.device)
 
             if self.multi_label:
-                ### multi-label
                 losses[task_label] = nn.BCEWithLogitsLoss(reduction="sum")  # , pos_weight=class_weight)
             else:
                 losses[task_label] = nn.CrossEntropyLoss(weight=weight)
@@ -252,13 +253,14 @@ class ToxicityClassifier():
     def predict(self, batches, model=None):
         self.model.eval()
         results = defaultdict(list)
+        soft = nn.Softmax(dim=1)
 
         for batch in batches:
 
             X_ids = torch.tensor(batch["inputs"]).to(self.device)
             X_att = torch.tensor(batch["attentions"]).to(self.device)
 
-            _, predictions = self.model(X_ids, attn=X_att)
+            logits, predictions = self.model(X_ids, attn=X_att)
 
             for task_label in self.task_labels:
                 masked_labels = [x if x in batch["masks"][task_label] else np.nan for x in batch["labels"][task_label]]
@@ -269,7 +271,42 @@ class ToxicityClassifier():
                 results[task_label + "_pred"].extend(predictions[task_label])
                 results[task_label + "_label"].extend(batch["labels"][task_label])
 
+                if self.params.task == "single":
+                    results[task_label + "_logit"].extend(soft(logits[task_label])[:, 1])
+
         return pd.DataFrame.from_dict(results)
+
+    def mc_predict(self, batches, model=None):
+        results = defaultdict(list)
+        soft = nn.Softmax(dim=1)
+        num_samples = sum([batch["batch_len"] for batch in batches])
+        dropout_predictions = np.empty((0, num_samples, 1))
+
+        for task_label in self.task_labels:
+            for mc_pass in range(self.params.mc_passes):
+                self.model.eval()
+                self.enable_dropout(self.model)
+                mc_predictions = np.empty((0, 1))
+
+                for batch in batches:
+                    X_ids = torch.tensor(batch["inputs"]).to(self.device)
+                    X_att = torch.tensor(batch["attentions"]).to(self.device)
+                    logits, predictions = self.model(X_ids, attn=X_att)
+
+                    predictions = np.array(predictions[task_label])
+                    mc_predictions = np.vstack((mc_predictions, predictions[:, np.newaxis]))
+
+                dropout_predictions = np.vstack((dropout_predictions,
+                                                 mc_predictions[np.newaxis, :]))
+            results[task_label + "_mean"] = list(np.squeeze(np.mean(dropout_predictions, axis=0)))
+            results[task_label + "_variance"] = list(np.squeeze(np.var(dropout_predictions, axis=0)))
+
+        return pd.DataFrame.from_dict(results)
+
+    def enable_dropout(self, model):
+        for m in model.modules():
+            if m.__class__.__name__.startswith('Dropout'):
+                m.train()
 
     def report_results(self, results):
         if len(self.task_labels) > 1:
@@ -301,10 +338,10 @@ class ToxicityClassifier():
                 f = 2 * p * r / (p + r)
             except Exception:
                 f = 0
-            print({"A": round(a, 3),
-                   "P": round(p, 3),
-                   "R": round(r, 3),
-                   "F1": round(f, 3)})
+            print({"A": round(a, 4),
+                   "P": round(p, 4),
+                   "R": round(r, 4),
+                   "F1": round(f, 4)})
 
             print("Accuracy of the majority vote (using all annotator heads):")
         else:
@@ -325,10 +362,10 @@ class ToxicityClassifier():
         except Exception:
             f = 0
 
-        scores = {"A": round(a, 3),
-                  "P": round(p, 3),
-                  "R": round(r, 3),
-                  "F1": round(f, 3)}
+        scores = {"A": round(a, 4),
+                  "P": round(p, 4),
+                  "R": round(r, 4),
+                  "F1": round(f, 4)}
         return scores
 
     def get_batches(self, data):
