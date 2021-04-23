@@ -41,6 +41,8 @@ def main():
                         type=bool)
     parser.add_argument("--sort_by",
                         type=str)
+    parser.add_argument("--predict",
+                        type=str)
 
     args = parser.parse_args()
 
@@ -48,7 +50,7 @@ def main():
     def_params.update(args)
 
     if def_params.task not in ["single", "multi_task", "multi_label", "ensemble"]:
-        print("Wring task input")
+        print("Wrong task input")
         exit(1)
 
     df = pd.read_csv(os.path.join(def_params.source_dir, "data", "GHC", "ghc_multi.csv"))
@@ -61,7 +63,7 @@ def main():
     score, results = model.CV()
 
     score["params"] = ", ".join(key + ": " + str(val) for key, val in def_params.__dict__.items())
-    score["task"] = model.params["task"]
+    score["task"] = model.params.task
 
     pacific = pytz.timezone('US/Pacific')
     sa_time = datetime.now(pacific)

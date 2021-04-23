@@ -1,12 +1,13 @@
 from sklearn.preprocessing import LabelEncoder
 from sklearn.model_selection import train_test_split, KFold, StratifiedKFold
-from sklearn.metrics import accuracy_score, precision_recall_fscore_support
+from sklearn.metrics import accuracy_score, precision_recall_fscore_support, r2_score
 from sklearn.utils.class_weight import compute_class_weight
 
 import torch
 import torch.nn as nn
 from torch.nn import functional as F
 from transformers import BertTokenizer, BertModel, AdamW, BertConfig
+from scipy.special import softmax
 
 import pandas as pd
 import numpy as np
@@ -29,6 +30,7 @@ class ClassifierBert(nn.Module):
         self.tasks = tasks
         self.labels = labels
         self.linear_layer = dict()
+        self.sigmoid_layer = nn.Sigmoid()
         for task in tasks:
             self.linear_layer[task] = nn.Linear(BertConfig().hidden_size, labels).to(device)
 
@@ -49,6 +51,9 @@ class ClassifierBert(nn.Module):
             sig_logits = {str(label): torch.sigmoid(logits[str(label)]) for label in range(self.labels)}
             predictions = {str(label): [1 if x > 0.5 else 0 for x in sig_logits[str(label)]] for label in
                            range(self.labels)}
+        elif self.labels == 1:
+            logits = self.task_logits
+            predictions = {task: [x.item() for x in self.sigmoid_layer(logits[task])] for task in self.tasks}
         else:
             logits = self.task_logits
             predictions = {task: [x.item() for x in torch.argmax(logits[task], dim=-1)] for task in self.tasks}
@@ -70,22 +75,22 @@ warnings.warn = warn
 
 
 class ToxicityClassifier():
-    def __init__(self, data, annotators, params):
+    def __init__(self, data, annotators, params, task_labels=["toxic"]):
         self.tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
         self.device = torch.device('cuda')
         self.data = data
         self.annotators = annotators
 
-        self.multi_label, self.multi_task, self.ensemble, self.single = False, False, False, False
+        self.multi_label, self.multi_task, self.ensemble, self.single, self.log_reg = False, False, False, False, False
         setattr(self, params.task, True)
 
-        if self.single:
-            self.task_labels = ["toxic"]
+        if self.single or self.log_reg:
+            self.task_labels = task_labels
         else:
             self.task_labels = annotators
 
         self.majority_vote()
-        self.certainty()
+        self.uncertainty()
         print("Data shape after majority voting", self.data.shape)
 
         # Setting the parameters
@@ -97,11 +102,11 @@ class ToxicityClassifier():
                               self.data[self.annotators].count(axis=1) >= 0.5).astype(int)
         print(sum(self.data["toxic"]))
 
-    def certainty(self):
-        self.data["certainty"] = 1 - (self.data[self.annotators].sum(axis=1) \
-                                      * (self.data[self.annotators].count(axis=1) - self.data[self.annotators].sum(
+    def uncertainty(self):
+        self.data["uncertainty"] = (self.data[self.annotators].sum(axis=1) \
+                                    * (self.data[self.annotators].count(axis=1) - self.data[self.annotators].sum(
                     axis=1)) \
-                                      / (self.data[self.annotators].count(axis=1) * self.data[self.annotators].count(
+                                    / (self.data[self.annotators].count(axis=1) * self.data[self.annotators].count(
                     axis=1)))
 
     def CV(self):
@@ -141,6 +146,12 @@ class ToxicityClassifier():
 
             train = data.loc[train_idx].reset_index()
             test = data.loc[test_idx].reset_index()
+            """
+            if i == 1:
+              test.to_csv(os.path.join(self.params.source_dir, "results", "GHC", "test_file.csv"), index=False)
+            else:
+              test.to_csv(os.path.join(self.params.source_dir, "results", "GHC", "test_file.csv"), index=False, header=False, mode="a")
+            """
 
             train_batches = self.get_batches(train)
             test_batches = self.get_batches(test)
@@ -171,6 +182,8 @@ class ToxicityClassifier():
             return ClassifierBert(self.device, tasks=self.annotators)
         elif self.multi_label:
             return ClassifierBert(self.device, labels=len(self.annotators))
+        elif self.log_reg:
+            return ClassifierBert(self.device, labels=1, tasks=self.task_labels)
         else:
             return ClassifierBert(self.device)
 
@@ -189,6 +202,8 @@ class ToxicityClassifier():
 
             if self.multi_label:
                 losses[task_label] = nn.BCEWithLogitsLoss(reduction="sum")  # , pos_weight=class_weight)
+            elif self.log_reg:
+                losses[task_label] = nn.MSELoss()
             else:
                 losses[task_label] = nn.CrossEntropyLoss(weight=weight)
 
@@ -253,7 +268,6 @@ class ToxicityClassifier():
     def predict(self, batches, model=None):
         self.model.eval()
         results = defaultdict(list)
-        soft = nn.Softmax(dim=1)
 
         for batch in batches:
 
@@ -272,7 +286,8 @@ class ToxicityClassifier():
                 results[task_label + "_label"].extend(batch["labels"][task_label])
 
                 if self.params.task == "single":
-                    results[task_label + "_logit"].extend(soft(logits[task_label])[:, 1])
+                    results[task_label + "_logit"].extend(
+                        softmax(logits[task_label].cpu().detach().numpy(), axis=1)[:, 1])
 
         return pd.DataFrame.from_dict(results)
 
@@ -309,6 +324,12 @@ class ToxicityClassifier():
                 m.train()
 
     def report_results(self, results):
+        if self.log_reg:
+            label_col = self.task_labels[0] + "_label"
+            pred_col = self.task_labels[0] + "_pred"
+            r2 = r2_score(results[label_col], results[pred_col])
+            scores = {"r2": round(r2, 4)}
+            return scores
         if len(self.task_labels) > 1:
             label_cols = [col + "_label" for col in self.annotators]
             pred_cols = [col + "_pred" for col in self.annotators]
@@ -386,7 +407,7 @@ class ToxicityClassifier():
             data_info["labels"] = anno_batch
             data_info["masks"] = mask_batch
 
-            data_info["majority_vote"] = data["toxic"].tolist()[s: e]
+            # data_info["majority_vote"] = data["toxic"].tolist()[s: e]
             data_info["batch_len"] = e - s
             if isinstance(self.params.batch_weight, str):
                 data_info["weights"] = data[self.params.batch_weight].tolist()[s: e]
