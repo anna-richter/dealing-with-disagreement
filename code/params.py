@@ -1,12 +1,14 @@
 class params():
     def __init__(self):
-        self.source_dir = "../.."
+        # needs to be changed to my path
+        self.source_dir = "C:/Users/Anna Richter/Documents/GitHub/dealing-with-disagreement"
         self.batch_size = 4
-        self.learning_rate =  1e-7
+        self.learning_rate = 1e-7
         self.max_len = 128
         self.num_epochs = 3
         self.random_state = 9999
         self.num_folds = 5
+        # does this need to be changed to "multi-task"?
         self.task = "single"
         self.batch_weight = None
         self.sort_by = None
@@ -22,5 +24,5 @@ class params():
 
     def update_dict(self, new):
         for k, v in new.items():
-              print("Changing the default value of {} from {} to {}".format(k, getattr(self, k), v))
-              setattr(self, k, v)
+            print("Changing the default value of {} from {} to {}".format(k, getattr(self, k), v))
+            setattr(self, k, v)

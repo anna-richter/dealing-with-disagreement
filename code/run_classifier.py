@@ -11,6 +11,7 @@ import re
 def main():
     parser = argparse.ArgumentParser()
 
+    # needs to be updated
     parser.add_argument("--source_dir",
                         default=None,
                         type=str,
@@ -53,7 +54,9 @@ def main():
         print("Wrong task input")
         exit(1)
 
+    # needs to be adjusted such that our dataframe is read in
     df = pd.read_csv(os.path.join(def_params.source_dir, "data", "GHC", "ghc_multi.csv"))
+    # needs to be updated to work with our dataformat
     annotators = [col for col in df
                   .columns \
                 if re.fullmatch(re.compile(r"[0-9]+"), col)]
@@ -65,12 +68,13 @@ def main():
     score["params"] = ", ".join(key + ": " + str(val) for key, val in def_params.__dict__.items())
     score["task"] = model.params.task
 
-    pacific = pytz.timezone('US/Pacific')
-    sa_time = datetime.now(pacific)
+    eastern = pytz.timezone('US/Eastern')
+    sa_time = datetime.now(eastern)
     name_time = sa_time.strftime('%m%d%y-%H:%M')
     score["time"] = name_time
     print(score)
 
+    # needs to be changed to cater for our data
     score_dir = os.path.join(def_params.source_dir, "results", "GHC", "classification.csv")
     result_dir = os.path.join(def_params.source_dir, "results", "GHC", name_time + "_" + def_params.task + ".csv")
     if os.path.exists(score_dir):

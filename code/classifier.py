@@ -97,6 +97,7 @@ class ToxicityClassifier():
         self.params = params
         print([(k, v) for k, v in self.params.__dict__.items()])
 
+    # need to check if this majority thing actually works the way we want it to work
     def majority_vote(self):
         self.data["toxic"] = (self.data[self.annotators].sum(axis=1) / \
                               self.data[self.annotators].count(axis=1) >= 0.5).astype(int)
@@ -132,6 +133,7 @@ class ToxicityClassifier():
         new_labels = LabelEncoder().fit_transform([''.join(str(l) for l in row) for i, row in df.iterrows()])
         return new_labels
 
+    # cross-validation??? used when not using ensemble model
     def _CV(self, data):
         if self.params.stratified:
             kfold = StratifiedKFold(n_splits=self.params.num_folds, shuffle=True,
